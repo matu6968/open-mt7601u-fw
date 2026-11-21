@@ -1,0 +1,17 @@
+The firmware sources were extracted from the independent MediaTek MT7601U
+station runtime in matu6968's rtl8811cu-fw-re research tree. The extraction
+baseline was the independent-station image with SHA-256
+8e913754e8b9cc1e3dad11ecb40c20d34e018a53eca94d3744f69f6d267fae96.
+
+Linux mt7601u sources informed the hardware register and driver ABI mapping.
+Relevant upstream mt7601u source notices include:
+
+    Copyright (C) 2014 Felix Fietkau <nbd@openwrt.org>
+    Copyright (C) 2015 Jakub Kicinski <kubakici@wp.pl>
+
+Linux source reference: drivers/net/wireless/mediatek/mt7601u in the Linux
+kernel tree (GPL-2.0-only). This project is independent of the Linux driver.
+
+MediaTek firmware from Linux, vendor distributions, and an IMILAB camera
+was used as a behavior reference. The standalone build uses no proprietary
+firmware images, disassembly exports, or vendor object code.

@@ -1,0 +1,6 @@
+/build/
+/target_firmware/
+/toolchain/build/
+/toolchain/src/
+/toolchain/nds32be-elf/
+__pycache__/
