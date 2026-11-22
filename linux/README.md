@@ -99,3 +99,30 @@ For firmware-level control, Andes command 16 takes one or two pairs of
 little-endian 32-bit words. Each pair contains the channel and control
 value. Values 0, 1, and 2 select steady on, off, and MAC activity respectively.
 Values 3 through 6 and `0x10` select stock hardware blink patterns.
+
+## EEPROM and eFuse utilities
+
+The `mt7601u_eeprom` utility accesses the
+eFuse controller through the Linux driver's debugfs `regidx` and `regval`
+files. On an adapter that already binds to the current driver, build only
+the userspace tool and use the PHY listed for the MT7601U in `iw dev`.
+[Utility source](https://github.com/xurubin/mt7601u_eeprom/)
+
+```sh
+cd /path/to/mt7601u_eeprom
+make mt7601
+iw dev
+sudo ./mt7601 phyN dump logical
+sudo ./mt7601 phyN dump physical
+sudo ./mt7601 phyN save adapter-backup.bin
+sudo ./mt7601 phyN flash_test adapter-backup.bin
+```
+
+These commands require `CONFIG_DEBUG_FS` and a mounted debugfs. The utility's `make all`
+also tries to build a bundled legacy driver for adapters with blank eFuse.
+Its mac80211 callbacks predate Linux 7.0. A blank adapter that fails probe
+needs a driver that can bind to it before this debugfs workflow is available.
+
+`flash_test` previews the allocation and physical block changes.
+`flash_real` permanently programs one-time eFuse bits. See the
+[compatibility test](../QUALIFICATION.md#eeprom-utility-compatibility-2026-11-22).

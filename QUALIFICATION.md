@@ -111,3 +111,19 @@ TL-WN727N v4 remains pending.
 | --- | --- |
 | Verbose firmware | `5900e39bedeb98f69fd60c253e1bee398c7d88874c2af0126469790a3e04b311` |
 | Companion module | `75e9c29591acd474b6acc360b8342b1a412be5c181a5a4e04b948b791a51fe1b` |
+
+## EEPROM utility compatibility, 2026-11-22
+
+The unmodified [`mt7601u_eeprom`](https://github.com/xurubin/mt7601u_eeprom/)
+userspace tool at `09bd372` worked with the companion Linux
+`7.0.0-43-generic` module (srcversion `446C00669DF6FF7E34269E5`) and the
+verbose 35,824-byte firmware (build time `202611221114____`, installed-image
+SHA-256 `f97823b4f40b74b660b03f2ba6d34823c7cb143555502c84884f50f704082ba6`).
+
+Both `dump` modes read 32 blocks. The 256-byte `save` matched the mapped
+physical blocks and all 16 logical blocks in the firmware's separate boot
+snapshot. `flash_test` proposed zero block changes for the saved image and
+six for the utility's bundled sample. The 512-byte physical dump matched
+before and after both dry runs. This run exercised readout and planning.
+The utility's bundled kernel module failed to build against the current
+kernel headers with mac80211 callback signature mismatches.
