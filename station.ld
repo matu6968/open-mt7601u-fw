@@ -1,9 +1,10 @@
-/* Isolated stage 7 station layout.
+/* Prototype compact station layout (contiguous ILM image).
  *
- * Every stock MT7601U image has DLM length zero.  Loading custom data at
- * 0x78000 can overwrite BootROM workspace before firmware takes ownership,
- * so this profile keeps mutable runtime below the preserved SRAM at
- * 0xfc00 and emits no DLM payload.
+ * Only the vectors (0x0), entry (0xa4), the log ring (0xd000), the host-read
+ * IQ trace (0xc000) and packet diagnostics (0xc900) are fixed.  Everything
+ * else is packed contiguously; nothing in the image is placed by object name,
+ * so the layout survives LTO.  Zero-initialised runtime state is NOLOAD and
+ * cleared by clear_bss() in main.c.
  */
 OUTPUT_FORMAT("elf32-nds32le")
 OUTPUT_ARCH(nds32)
@@ -27,70 +28,19 @@ SECTIONS
 	.text 0x000000A4 : {
 		KEEP(*(.text.start))
 		KEEP(*(.text.vectors))
-		*(EXCLUDE_FILE (*calibration.o *iq_calibration.o *bw_dpd.o *packet.o *wow.o *led.o) .text .text.*)
-		*(EXCLUDE_FILE (*calibration.o *iq_calibration.o *bw_dpd.o *packet.o *wow.o *led.o) .rodata .rodata.*)
+		*(.text .text.*)
+		*(.portguard)
+		*(.rodata .rodata.*)
+		*(.caldiag)
+		*(.events)
 	} > ILM
 
-	/* Keep descriptor and payload bases at least doubleword-aligned. The
-	 * accepted packet image has this alignment; growth in USB text must not
-	 * silently move the embedded rings to a four-byte-only address. */
+	/* Keep descriptor and payload bases at least doubleword-aligned. */
 	.data ALIGN(8) : {
 		*(.data .data.*)
 		*(.sdata .sdata.*)
 	} > ILM
-	ASSERT((runtime & 7) == 0, "runtime DMA storage is not doubleword-aligned")
 
-	.bss (NOLOAD) : ALIGN(4) {
-		__bss_start = .;
-		*(EXCLUDE_FILE (*packet.o) .bss .bss.*)
-		*(COMMON)
-		__bss_end = .;
-	} > ILM
-	/* Keep accepted calibration globals and the GP base at their stage 5
-	 * addresses. Packet state is independently initialized before readiness. */
-	.packetstate 0x00006700 (NOLOAD) : {
-		*packet.o(.bss .bss.* .scommon_w .scommon_h .scommon_b)
-	} > ILM
-	ASSERT(ADDR(.scommon_w) + SIZEOF(.scommon_w) <= 0x6700, "core globals overlap packet state")
-	ASSERT(ADDR(.packetstate) + SIZEOF(.packetstate) <= 0x6c00, "packet state overlaps code")
-
-	/* Calibration controller ownership preserves the host's real pending
-	 * halfword pair or completion without moving accepted core globals. */
-	.portguard 0x00006800 : { *(.portguard) } > ILM
-	ASSERT(ADDR(.packetstate) + SIZEOF(.packetstate) <= 0x6800,
-		"packet state overlaps controller guard")
-	ASSERT(ADDR(.portguard) + SIZEOF(.portguard) <= 0x6c00,
-		"controller guard overlaps packet code")
-
-	/* Isolate new calibration instructions from the proven transport/core
-	 * placement. Space below 0x7800 remains available to runtime state. */
-	.packet 0x00006c00 : {
-		*packet.o(.text .text.* .rodata .rodata.*)
-	} > ILM
-	.led ALIGN(4) : { *led.o(.text .text.* .rodata .rodata.*) } > ILM
-	ASSERT(__bss_end <= 0x6c00, "core state overlaps packet code")
-	ASSERT(ADDR(.scommon_w) + SIZEOF(.scommon_w) <= 0x6c00, "small common overlaps packet code")
-	ASSERT(ADDR(.led) + SIZEOF(.led) <= 0x7800, "packet or LED code overlaps calibration")
-	.calibration 0x00007800 : {
-		*calibration.o(.text .text.* .rodata .rodata.*)
-		*iq_calibration.o(.text .text.* .rodata .rodata.*)
-		*bw_dpd.o(.text .text.* .rodata .rodata.*)
-		*(.caldiag)
-	} > ILM
-	ASSERT(__bss_end <= 0x7800, "core state overlaps calibration code")
-	ASSERT(ADDR(.scommon_w) + SIZEOF(.scommon_w) <= 0x7800,
-		"small-common overlaps calibration code")
-	ASSERT(ADDR(.calibration) + SIZEOF(.calibration) <= 0xc000,
-		"calibration code overlaps IQ trace")
-	/* Bounded diagnostic measurement trace: count plus 512 words. */
-	.iqtrace 0x0000c000 : { LONG(0); . += 0x800; } > ILM
-	/* Packet snapshots write these words at runtime. Reserve them even
-	 * though they are not uploaded, so diagnostic code cannot occupy them. */
-	.packetdiagnostics 0x0000c900 (NOLOAD) : { . += 0xc0; } > ILM
-	.events 0x0000c9c0 : { *(.events) } > ILM
-	.wowlan ALIGN(4) : {
-		*wow.o(.text .text.* .rodata .rodata.*)
-	} > ILM
 	.image_footer ALIGN(4) : {
 		KEEP(*(.image_usb.language))
 		KEEP(*(.image_usb.manufacturer))
@@ -103,13 +53,29 @@ SECTIONS
 		SHORT(0x0001); /* Open firmware version. */
 	} > ILM
 	__ilm_end = ADDR(.image_footer) + SIZEOF(.image_footer);
+
+	/* Runtime state follows the uploaded image but is not uploaded. */
+	.bss (NOLOAD) : ALIGN(8) {
+		__bss_start = .;
+		*(.sbss .sbss.* .scommon_w .scommon_h .scommon_b .scommon)
+		*(.bss .bss.*)
+		*(COMMON)
+		. = ALIGN(4);
+		__bss_end = .;
+	} > ILM
+
+	/* Host-readable (EP0 memory read) trace and packet evidence keep their
+	 * addresses.  Both are zeroed at boot instead of uploaded. */
+	.iqtrace 0x0000c000 (NOLOAD) : { . += 0x804; } > ILM
+	.packetdiagnostics 0x0000c900 (NOLOAD) : { . += 0xc0; } > ILM
+
+	ASSERT((runtime & 7) == 0, "runtime DMA storage is not doubleword-aligned")
+	ASSERT(__ilm_end <= 0xc000, "firmware image overlaps the IQ trace")
+	ASSERT(__bss_end <= 0xc000, "runtime state overlaps the IQ trace")
 	ASSERT(__ilm_end <= 0xd000, "firmware overlaps the log ring")
 	__dlm_end = .;
 	/* Stay below the BootROM-owned descriptor/IRQ region at 0xfc00. */
 	_stack_top = 0x0000fb00;
-	ASSERT(__bss_end <= 0x0000d000, "runtime overlaps the ILM log ring")
-	ASSERT(ADDR(.scommon_w) + SIZEOF(.scommon_w) <= 0x0000d000,
-		"small-common runtime overlaps the ILM log ring")
 	ASSERT(_stack_top < 0x0000fc00, "stack overlaps BootROM scratch")
 
 	/DISCARD/ : {

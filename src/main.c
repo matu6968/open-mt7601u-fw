@@ -3,6 +3,7 @@
 #include "mt7601u_log_ring.h"
 #include "mt7601u_efuse.h"
 #include "mt7601u_rf_bbp.h"
+#include "mt7601u_iq_calibration.h"
 #ifdef __NDS32__
 #include <nds32_intrinsic.h>
 #endif
@@ -20,7 +21,7 @@
 
 /* The station layout keeps runtime state in ILM. BootROM owns the DLM
  * workspace during firmware upload. */
-struct mt7601u_runtime runtime = { .fault = 0xffffffffu };
+struct mt7601u_runtime runtime __attribute__((aligned(8)));
 static struct mt7601u_efuse_snapshot efuse_snapshot;
 
 /* Written before the exception handler parks. */
@@ -70,6 +71,11 @@ void independent_entry(void)
 	uint32_t reported_resets = 0u;
 
 	clear_bss();
+	/* runtime lives in NOLOAD .bss; restore its former initial fault marker. */
+	runtime.fault = 0xffffffffu;
+	/* IQ trace is host-readable and no longer uploaded as zeros. */
+	for (idle = MT7601U_IQ_TRACE_BASE; idle < MT7601U_IQ_TRACE_END; idle += 4u)
+		MMIO32(idle) = 0u;
 	/* These small-common symbols are linked after .bss on this toolchain,
 	 * so clear them explicitly before the first USB diagnostic can inspect
 	 * the trap flag. */

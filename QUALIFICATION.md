@@ -17,6 +17,17 @@ Two clean builds of the original station qualification images passed
 and binutils 2.35.2. The hashes below identify the images used for the
 traffic results.
 
+These hashes and the results below predate the compact ILM layout and the
+GCC 16.2.1 / binutils 2.47 toolchain (optionally with `-flto`). The new layout
+and toolchain passed `make check`, `check_efuse_layout.py` and
+`check_mt7601u_stack.py`, and two clean builds were byte-identical, but only a
+single scan, association and kernel-log comparison has been run on hardware,
+with the verbose image built with GCC 16.2.1 and `-flto` (35,824 bytes, build
+time 202311142213). It loaded, ran, read the EEPROM and associated, and the
+upload stage was about 3.5 ms faster than the previous image. They are not
+qualified: the series above has not been repeated, and the quiet LTO image and
+the non-LTO builds have not been run on hardware.
+
 | Image | SHA-256 |
 | --- | --- |
 | Quiet | `f151450eec3ce751d381ec3d333aa9e510844e4bc038855e2eb9d56ba4944e08` |

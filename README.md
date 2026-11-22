@@ -9,7 +9,8 @@ reads, and radio calibration.
 ## Build
 
 Install GNU Make, Python 3.10 or later, and a host C compiler. Bootstrapping the
-cross compiler also requires a C++ compiler, GNU build tools, and wget.
+cross compiler also requires a C++ compiler, GNU build tools, and the GMP, MPFR
+and MPC development packages.
 
 ```sh
 make toolchain
@@ -18,10 +19,20 @@ make -j verbose
 make check
 ```
 
-The bootstrap builds GCC 9.5.0 and binutils 2.35.2 for `nds32be-elf`. To use an
-existing installation of that toolchain, pass its installation directory as
-`NDS32_PREFIX=/path/to/nds32be-elf`. The build uses little-endian runtime data
-and the NDS32 N9 instruction set.
+The bootstrap builds GCC 16 and binutils 2.47 for `nds32be-elf` from local
+source trees: `toolchain/gcc` (GCC, 16.2.1 was used) and
+`toolchain/binutils-gdb`, which may be symlinks. Set `GCC_SRC` and
+`BINUTILS_SRC` to use other locations. Nothing is downloaded. To use an
+existing installation, pass its installation directory as
+`NDS32_PREFIX=/path/to/nds32be-elf`. The build uses
+little-endian runtime data and the NDS32 N9 instruction set.
+
+The Makefile defaults to `OPT=-Os` and `LTOFLAGS=-flto`. The quiet image is
+32,808 bytes with LTO and 35,360 bytes without (`make LTOFLAGS=`), against
+52,968 bytes for the previous layout. Only the vectors (`0x0`), entry (`0xa4`), IQ trace (`0xc000`),
+packet diagnostics (`0xc900`) and log ring (`0xd000`) have fixed addresses;
+the rest of the ILM image is packed contiguously and zero-initialised runtime
+state is not uploaded.
 
 | Image | Diagnostics |
 | --- | --- |

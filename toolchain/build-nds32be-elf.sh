@@ -1,92 +1,72 @@
 #!/bin/sh
-# Bootstrap nds32be-elf GCC 9.5 + binutils 2.35 (real NDS32 ISA, not Andes RISC-V v5).
-# Prefix is fw/toolchain/nds32be-elf; do not commit the prefix or build trees.
+# Bootstrap nds32be-elf GCC 16 + binutils 2.47 (real NDS32 ISA, not Andes RISC-V v5)
+# from local source checkouts; nothing is downloaded.
+#
+#   toolchain/gcc          GCC source tree (16.2.1 was used; may be a symlink)
+#   toolchain/binutils-gdb binutils-gdb source tree (2.47 release)
+#
+# Override with GCC_SRC=... and BINUTILS_SRC=.... GMP, MPFR and MPC come from
+# the host (install their development packages). Prefix is
+# toolchain/nds32be-elf; do not commit the prefix, build trees, or source links.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
-PREFIX=$ROOT/nds32be-elf
-SRC=$ROOT/src
-BUILD=$ROOT/build
+PREFIX=${PREFIX:-$ROOT/nds32be-elf}
+BUILD=${BUILD:-$ROOT/build}
+GCC_SRC=${GCC_SRC:-$ROOT/gcc}
+BINUTILS_SRC=${BINUTILS_SRC:-$ROOT/binutils-gdb}
 TARGET=nds32be-elf
 NPROC=$(nproc 2>/dev/null || echo 4)
-GNU_MIRROR=${GNU_MIRROR:-https://ftpmirror.gnu.org/gnu}
 
-BINUTILS_VER=2.35.2
-GCC_VER=9.5.0
-GMP_VER=6.2.1
-MPFR_VER=4.1.0
-MPC_VER=1.2.1
+[ -f "$GCC_SRC/gcc/BASE-VER" ] || {
+	echo "GCC source tree not found at $GCC_SRC (set GCC_SRC)" >&2; exit 1; }
+[ -f "$BINUTILS_SRC/bfd/config.bfd" ] || {
+	echo "binutils-gdb source tree not found at $BINUTILS_SRC (set BINUTILS_SRC)" >&2; exit 1; }
+grep -q nds32 "$GCC_SRC/gcc/config.gcc" || {
+	echo "$GCC_SRC has no nds32 backend" >&2; exit 1; }
+grep -q nds32 "$BINUTILS_SRC/bfd/config.bfd" || {
+	echo "$BINUTILS_SRC has no nds32 support" >&2; exit 1; }
+echo "GCC $(cat "$GCC_SRC/gcc/BASE-VER"), binutils-gdb at $BINUTILS_SRC"
 
-mkdir -p "$SRC" "$BUILD"
-cd "$SRC"
-
-fetch() {
-	url=$1
-	out=$2
-	if [ -f "$out" ]; then
-		return 0
-	fi
-	echo "fetch $url"
-	wget -O "$out.part" "$url"
-	mv "$out.part" "$out"
-}
-
-fetch "$GNU_MIRROR/binutils/binutils-${BINUTILS_VER}.tar.xz" "binutils-${BINUTILS_VER}.tar.xz"
-fetch "$GNU_MIRROR/gcc/gcc-${GCC_VER}/gcc-${GCC_VER}.tar.xz" "gcc-${GCC_VER}.tar.xz"
-fetch "$GNU_MIRROR/gmp/gmp-${GMP_VER}.tar.xz" "gmp-${GMP_VER}.tar.xz"
-fetch "$GNU_MIRROR/mpfr/mpfr-${MPFR_VER}.tar.xz" "mpfr-${MPFR_VER}.tar.xz"
-fetch "$GNU_MIRROR/mpc/mpc-${MPC_VER}.tar.gz" "mpc-${MPC_VER}.tar.gz"
-
-[ -d "binutils-${BINUTILS_VER}" ] || tar -xf "binutils-${BINUTILS_VER}.tar.xz"
-[ -d "gcc-${GCC_VER}" ] || tar -xf "gcc-${GCC_VER}.tar.xz"
-
-if [ ! -d "gcc-${GCC_VER}/gmp" ]; then
-	tar -xf "gmp-${GMP_VER}.tar.xz"
-	mv "gmp-${GMP_VER}" "gcc-${GCC_VER}/gmp"
-fi
-if [ ! -d "gcc-${GCC_VER}/mpfr" ]; then
-	tar -xf "mpfr-${MPFR_VER}.tar.xz"
-	mv "mpfr-${MPFR_VER}" "gcc-${GCC_VER}/mpfr"
-fi
-if [ ! -d "gcc-${GCC_VER}/mpc" ]; then
-	tar -xzf "mpc-${MPC_VER}.tar.gz"
-	mv "mpc-${MPC_VER}" "gcc-${GCC_VER}/mpc"
-fi
-
-# Host GCC 15 is stricter than GCC 9's sources; keep the compiler in C++14.
 export CC="${CC:-gcc}"
 export CXX="${CXX:-g++}"
 export CFLAGS="${CFLAGS:--O2}"
-export CXXFLAGS="${CXXFLAGS:--O2 -std=gnu++14}"
+export CXXFLAGS="${CXXFLAGS:--O2}"
+mkdir -p "$BUILD"
 
 if [ ! -x "$PREFIX/bin/${TARGET}-as" ]; then
-	echo "=== binutils ${BINUTILS_VER} (${TARGET}) ==="
+	echo "=== binutils (${TARGET}) ==="
 	rm -rf "$BUILD/binutils"
 	mkdir -p "$BUILD/binutils"
 	cd "$BUILD/binutils"
-	"$SRC/binutils-${BINUTILS_VER}/configure" \
+	"$BINUTILS_SRC/configure" \
 		--prefix="$PREFIX" \
 		--target="$TARGET" \
 		--disable-nls \
 		--disable-werror \
 		--disable-gdb \
+		--disable-gdbserver \
 		--disable-sim \
-		--disable-libdecnumber \
 		--disable-readline \
 		--disable-gprof \
 		--disable-gold \
-		--disable-lto
-	make -j"$NPROC"
-	make install
+		--enable-plugins \
+		--with-system-zlib
+	make -j"$NPROC" all-binutils all-gas all-ld
+	make install-binutils install-gas install-ld
 	cd "$ROOT"
 fi
 
+# GCC finds the new assembler and linker through PATH while it configures.
+PATH="$PREFIX/bin:$PATH"
+export PATH
+
 if [ ! -x "$PREFIX/bin/${TARGET}-gcc" ]; then
-	echo "=== gcc ${GCC_VER} (${TARGET}) all-gcc ==="
+	echo "=== gcc (${TARGET}) all-gcc ==="
 	rm -rf "$BUILD/gcc"
 	mkdir -p "$BUILD/gcc"
 	cd "$BUILD/gcc"
-	"$SRC/gcc-${GCC_VER}/configure" \
+	"$GCC_SRC/configure" \
 		--prefix="$PREFIX" \
 		--target="$TARGET" \
 		--enable-languages=c \
@@ -98,9 +78,9 @@ if [ ! -x "$PREFIX/bin/${TARGET}-gcc" ]; then
 		--disable-libgomp \
 		--disable-libquadmath \
 		--disable-libatomic \
-		--disable-libstdcxx \
 		--disable-bootstrap \
 		--disable-multilib \
+		--enable-lto \
 		--without-headers \
 		--with-newlib \
 		--with-gnu-as \
@@ -112,5 +92,6 @@ if [ ! -x "$PREFIX/bin/${TARGET}-gcc" ]; then
 fi
 
 echo "installed $PREFIX"
+"$PREFIX/bin/${TARGET}-gcc" --version | head -n 1
 "$PREFIX/bin/${TARGET}-gcc" -dumpmachine
 "$PREFIX/bin/${TARGET}-gcc" -dM -E - </dev/null | grep -E '__NDS32__|__nds32|__riscv' || true
