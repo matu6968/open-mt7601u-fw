@@ -98,6 +98,8 @@ See [qualification status](QUALIFICATION.md) for exact-image testing and
 [firmware diagnostics](LOGGING.md) for event provenance. WEP40, WEP104, and
 TKIP/MIC have Linux hardware-key paths and await end-to-end validation.
 
-Firmware source is GPLv2 under [COPYING](COPYING). See
-[NOTICES.txt](NOTICES.txt) for source provenance. Report issues at the
+Firmware source is GPLv2 under [COPYING](COPYING) with [exceptions](COPYING.exceptions) to allow embedding
+or using the interfaces from unmodified firmware built from source or from prebuilt binaries
+inside of a driver/program that isn't under the GPL.
+See [NOTICES.txt](NOTICES.txt) for source provenance. Report issues at the
 [project repository](https://github.com/matu6968/open-mt7601u-fw).
