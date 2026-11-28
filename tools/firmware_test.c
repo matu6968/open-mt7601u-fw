@@ -26,6 +26,7 @@ static volatile uint32_t *test_mmio(uint32_t address)
 #include "../src/led.c"
 #include "../src/mailbox.c"
 #include "../src/wow.c"
+#include "mt7601u_usb_desc.h"
 
 static uint32_t calibration, tssi_value;
 
@@ -197,6 +198,45 @@ static void test_wowlan(struct mt7601u_runtime *runtime)
 	assert(mt7601u_wow_status() == 0x574f5700u);
 }
 
+static void test_usb_config_speed(void)
+{
+	/* Interface 0 of the stock config plus BootROM's second interface,
+	 * which adds interrupt (0x81) and isochronous (0x83) endpoints that
+	 * the ROM leaves at their table values. */
+	static const uint8_t config[] = {
+		0x09, 0x02, 0x3e, 0x00, 0x02, 0x01, 0x00, 0xa0, 0x50,
+		0x09, 0x04, 0x00, 0x00, 0x02, 0xff, 0xff, 0xff, 0x00,
+		0x07, 0x05, 0x84, 0x02, 0x00, 0x02, 0x00,
+		0x07, 0x05, 0x08, 0x02, 0x00, 0x02, 0x00,
+		0x09, 0x04, 0x01, 0x00, 0x03, 0xff, 0xff, 0xff, 0x00,
+		0x07, 0x05, 0x81, 0x03, 0x40, 0x00, 0x00,
+		0x07, 0x05, 0x82, 0x02, 0x00, 0x02, 0x00,
+		0x07, 0x05, 0x83, 0x01, 0x40, 0x00, 0x00,
+	};
+	const uint32_t n = sizeof(config);
+	uint8_t out[sizeof(config)];
+
+	for (uint32_t i = 0; i < n; i++)
+		assert(mt7601u_usb_config_byte(config, n, i, 0) == config[i]);
+	for (uint32_t i = 0; i < n; i++)
+		out[i] = mt7601u_usb_config_byte(config, n, i, 1);
+	for (uint32_t i = 0; i < n; i++) {
+		/* wMaxPacketSize low bytes of bulk endpoints 0x84, 0x08, 0x82 */
+		int low = i == 22 || i == 29 || i == 52;
+		int high = i == 23 || i == 30 || i == 53;
+
+		if (low)
+			assert(out[i] == 0x40);
+		else if (high)
+			assert(out[i] == 0x00);
+		else
+			assert(out[i] == config[i]);
+	}
+	/* A wLength-truncated request still patches what it sends. */
+	assert(mt7601u_usb_config_byte(config, 23, 22, 1) == 0x40);
+	assert(mt7601u_usb_config_byte(config, 22, 21, 1) == 0x02);
+}
+
 int main(void)
 {
 	struct mt7601u_runtime runtime = {0};
@@ -206,6 +246,7 @@ int main(void)
 	test_mailbox(&runtime);
 	test_led(&runtime);
 	test_wowlan(&runtime);
+	test_usb_config_speed();
 
 	store_le32(body, Q_SELECT);
 	store_le32(body + 4, 1);

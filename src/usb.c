@@ -2,6 +2,7 @@
 #include "mt7601u_wow.h"
 #include "mt7601u_iq_calibration.h"
 #include "mt7601u_log_ring.h"
+#include "mt7601u_usb_desc.h"
 
 #ifdef __NDS32__
 #include <nds32_intrinsic.h>
@@ -45,7 +46,23 @@ static uint8_t usb_phy_bank_select;
 static uint8_t usb_phy_snapshot[0x30];
 static uint32_t usb_shutdown_irq_mask;
 
+/* Flags for usb_ep0_send_bytes(). */
+#define USB_DESC_OTHER_SPEED		1	/* rewrite bDescriptorType to 7 */
+#define USB_DESC_FULL_SPEED_BULK	2	/* bulk wMaxPacketSize reads 64 */
+
 static void usb_ep0_complete(void);
+
+/* USB+0x68C bit 0 is set only by the high-speed endpoint-map event
+ * (USB+0x630 bit 5): BootROM bootrom_usb_set_endpoint_map (0x101160) sets it
+ * together with speed flag 0xFCDA = 1 and the high-speed endpoint banks, and
+ * mt7601u_usb_program_endpoints does the same here. The ROM's full-bank init
+ * writes the register as 2 and its bus-reset handler leaves bit 0 alone, so on
+ * a full-speed link it stays clear for the life of the attachment. */
+static int usb_link_high_speed(void)
+{
+	return (USB_CTRL_168C & 1u) != 0u;
+}
+
 /* BootROM 0x10181c and Imilab 0x5e04 keep a high-address base for vendor
  * 0x20/0x23. Initialise explicitly because Andes small-common is separate
  * from the linker's ordinary BSS. */
@@ -348,8 +365,21 @@ static int usb_ep0_wait_tx_ready(void)
 	return 1;
 }
 
+/* Configuration descriptor bytes for the current link speed. Same lane
+ * format as usb_fifo_push_ram_bytes; length is the whole transfer so the
+ * descriptor walk sees every header that precedes this packet. */
+static void usb_fifo_push_config_bytes(const uint8_t *config, uint32_t length,
+		uint32_t offset, uint32_t count)
+{
+	uint32_t lane;
+
+	for (lane = 0u; lane < count; lane++)
+		MMIO32(USB_EP0_FIFO_BASE + lane * 4u) =
+			mt7601u_usb_config_byte(config, length, offset + lane, 1);
+}
+
 static int usb_ep0_send_bytes(struct mt7601u_runtime *runtime,
-		const uint8_t *bytes, uint32_t length, int other_speed)
+		const uint8_t *bytes, uint32_t length, int flags)
 {
 	uint32_t offset = 0u;
 
@@ -364,8 +394,11 @@ static int usb_ep0_send_bytes(struct mt7601u_runtime *runtime,
 			count = USB_EP0_MAX_XFER;
 		if (!usb_ep0_wait_tx_ready())
 			return 0;
-		usb_fifo_push_ram_bytes(bytes + offset, count);
-		if (other_speed != 0 && offset == 0u && count > 1u)
+		if ((flags & USB_DESC_FULL_SPEED_BULK) != 0)
+			usb_fifo_push_config_bytes(bytes, length, offset, count);
+		else
+			usb_fifo_push_ram_bytes(bytes + offset, count);
+		if ((flags & USB_DESC_OTHER_SPEED) != 0 && offset == 0u && count > 1u)
 			MMIO32(USB_EP0_FIFO_BASE + 4u) = 7u;
 		USB_TX_COUNT = count;
 		USB_FIFO_CONTROL = USB_EP0_ARM_VALUE;
@@ -432,12 +465,12 @@ static int usb_set_endpoint_halt(uint16_t address, int halted)
 }
 
 static const uint8_t *usb_get_descriptor(uint16_t value, uint16_t index,
-		uint32_t *length, int *other_speed)
+		uint32_t *length, int *flags)
 {
 	uint8_t type = (uint8_t)(value >> 8);
 	uint8_t descriptor_index = (uint8_t)value;
 
-	*other_speed = 0;
+	*flags = 0;
 	switch (type) {
 	case 1u:
 		if (descriptor_index != 0u)
@@ -448,6 +481,8 @@ static const uint8_t *usb_get_descriptor(uint16_t value, uint16_t index,
 		if (descriptor_index != 0u)
 			return (const uint8_t *)0;
 		*length = sizeof(usb_configuration_descriptor);
+		if (!usb_link_high_speed())
+			*flags = USB_DESC_FULL_SPEED_BULK;
 		return usb_configuration_descriptor;
 	case 3u:
 		if (descriptor_index == 0u) {
@@ -478,7 +513,10 @@ static const uint8_t *usb_get_descriptor(uint16_t value, uint16_t index,
 		if (descriptor_index != 0u)
 			return (const uint8_t *)0;
 		*length = sizeof(usb_configuration_descriptor);
-		*other_speed = 1;
+		/* The other-speed view of a high-speed link is full speed. */
+		*flags = USB_DESC_OTHER_SPEED;
+		if (usb_link_high_speed())
+			*flags |= USB_DESC_FULL_SPEED_BULK;
 		return usb_configuration_descriptor;
 	case 15u:
 		if (descriptor_index != 0u)
@@ -501,7 +539,7 @@ static int usb_ep0_standard_request(struct mt7601u_runtime *runtime)
 	const uint8_t *descriptor;
 	uint32_t descriptor_length;
 	uint32_t status;
-	int other_speed;
+	int descriptor_flags;
 
 	runtime->usb_standard_requests++;
 	switch (request) {
@@ -560,13 +598,13 @@ static int usb_ep0_standard_request(struct mt7601u_runtime *runtime)
 		if (request_type != 0x80u)
 			goto unsupported;
 		descriptor = usb_get_descriptor(value, index, &descriptor_length,
-				&other_speed);
+				&descriptor_flags);
 		if (descriptor == (const uint8_t *)0)
 			goto unsupported;
 		if (descriptor_length > length)
 			descriptor_length = length;
 		if (!usb_ep0_send_bytes(runtime, descriptor, descriptor_length,
-				other_speed))
+				descriptor_flags))
 			goto not_ready;
 		return 1;
 	case USB_REQ_GET_CONFIGURATION:
